@@ -1,0 +1,197 @@
+# This file is part of Notus 0.2.0. Copyright Bordeaux-INP, Université de Bordeaux, CNRS
+# This software is governed by the CeCILL license under French law ("http://www.cecill.info").
+
+# Taylor green vortex 3D
+
+# @MPI_PROCS 32
+
+# Include physical properties from standard library
+include std "physical_properties.nts";
+
+string no_redefine solver_name = "hypre";
+# @PARAMETER integer TOD [1, 2]
+integer no_redefine TOD = 2;
+# @PARAMETER string bc_scheme ["linear", "quadratic"]
+string no_redefine bc_scheme = "linear";
+# # @PARAMETER string diffusion_scheme_name ["implicit","explicit"]
+string no_redefine diffusion_scheme_name = "implicit";
+boolean use_ghost = false;
+
+#reference solution parameters
+double u0 = 1d0;
+double rho0 = 1d0;
+#double reynolds = 1600; # nbr pts (Re^(9/4))^(1/3) -> 253
+double viscosity_fluid = 1/reynolds;
+#integer N_CELLS_X = 64;
+double  dx = 2*pi/N_CELLS_X;
+double tau_ref = 1d0 / u0;
+# Re 400 -> 1st max KEDR around 7 s
+#double end_time =   15.0;
+#double time_step_value = 1d-3;
+double CFL_adv = 0.3;
+double time_step_value = CFL_adv * dx / u0;
+string time_step_str = d2s(time_step_value,"es8.2");
+double time_step_output = 1.0e00;
+double time_step_checkpoint = 4.0;
+integer write_output_frequency = time_step_output / time_step_value;
+integer write_checkpoint_frequency = time_step_checkpoint / time_step_value;
+print " write_output_frequency = ", write_output_frequency, " write_checkpoint_frequency = ", write_checkpoint_frequency;
+
+string re_str = d2s(reynolds,"es8.2");
+string PREFIX = "output/caseTGV3d_" + i2s(N_CELLS_X) + "_Re" + re_str;
+
+system {
+    output_directory PREFIX;
+    measure_cpu_time;
+    measure_time_iteration_cpu_time;
+    enable_checkpoint true;
+    checkpoint_metric time_iteration;
+    checkpoint_frequency write_checkpoint_frequency;
+    checkpoint_file_numbering false;
+    # restart PREFIX + "/checkpoint/taylor_green_vortex_3D_current.bp";
+}
+
+domain {
+   spatial_dimension 3;
+   corner_1_coordinates (0.0, 0.0, 0.0);
+   corner_2_coordinates (2*pi, 2*pi, 2*pi);
+   periodicity_x;
+   periodicity_y;
+   periodicity_z;
+}
+
+grid {
+    grid_type regular;
+    number_of_cells  (N_CELLS_X, N_CELLS_X, N_CELLS_X);
+	number_of_ghost_cells 4;
+}
+
+modeling {
+   materials {
+       fluid "fluid_one" {
+           viscosity    viscosity_fluid;
+       }
+   }
+
+   equations {
+      navier_stokes {
+         boundary_condition {
+         }
+         initial_condition {
+            instructions {
+               @return (
+                        +u0 * sin(@x) * cos(@y) * cos(@z),
+                        -u0 * cos(@x) * sin(@y) * cos(@z),
+                        0d0
+                        );
+		}
+	   }
+	   relative_pressure_initial_condition{
+		instructions { # Drikakis2007, Mimeau2021
+			@return rho0*u0^2 * (2.0 + cos(2*@z)) * (cos(2*@x) + cos(2*@y))/16.0;
+            }
+         }
+      }
+  choose_filter_size 8;     
+   }
+}
+
+numerical_parameters {
+   final_time end_time;
+   # Adaptative time step
+   time_step adaptative {
+      temporal_stability_factor CFL_adv;
+      first_step time_step_value;
+    }
+
+   time_order_discretization TOD;
+
+	navier_stokes {
+      velocity_pressure_method incremental_pressure_correction;
+
+      advection_scheme implicit o2_centered;
+      #advection_scheme explicit lw_tvd_sb {
+      #    splitting_method strang; # eval(SplitMethod);
+      #}
+      diffusion_scheme eval(diffusion_scheme_name) o2_centered;
+
+
+      navier_has_ghost_boundary_cells use_ghost;
+      pressure_has_ghost_boundary_cells use_ghost;
+
+      if (bc_scheme == "linear") {
+         boundary_condition_scheme linear;
+      }
+      else if (bc_scheme == "quadratic") {
+         boundary_condition_scheme quadratic;
+         if (use_ghost == true) {enforced_stencil star_2;}
+      }
+
+      if (solver_name == "mumps") {
+         solver_momentum mumps_metis;
+         solver_pressure mumps_metis;
+      }
+      else if (solver_name == "hypre") {
+         solver_momentum hypre_gmres {
+            max_iteration 200;
+            tolerance 1.0e-6;
+            initial_preconditioner left_jacobi;
+         }
+         solver_pressure hypre_gmres {
+            max_iteration 100;
+            tolerance 1.0e-6;
+            initial_preconditioner left_jacobi;
+            preconditioner pfmg {
+               max_iteration 1;
+               tolerance 0.0;
+            }
+         }
+      }
+	}
+
+}
+
+post_processing {
+   output_library adios;
+   # output_library pixie;
+   # output_use_t3pio true;
+
+   #output_frequency 1000;
+   output_frequency write_output_frequency;
+
+   diagnostic_quantities kinetic_energy, kinetic_energy_dissipation_rate;
+   diagnostic_quantities q_criterion, vorticity;
+   diagnostic_quantities max velocity;
+   diagnostic_quantities max pressure;
+   diagnostic_quantities mean velocity;
+   diagnostic_quantities mean pressure;
+   diagnostic_quantities mean kinetic_energy;
+   diagnostic_quantities mean kinetic_energy_dissipation_rate;
+   diagnostic_quantities mean filtered_kinetic_energy_dissipation_rate;
+
+   validation {
+      mean pressure;
+      mean velocity;
+   }
+
+   output_fields q_criterion, vorticity, velocity, pressure;
+
+   probe_line {
+       output_name "center_line_z";
+       output_frequency write_output_frequency;
+       line_segment_z (pi, pi);
+       output_fields velocity, pressure;
+   }
+   probe_line {
+       output_name "center_line_y";
+       output_frequency write_output_frequency;
+       line_segment_y (pi, pi);
+       output_fields velocity, pressure;
+   }
+   probe_line {
+       output_name "center_line_x";
+       output_frequency write_output_frequency;
+       line_segment_x (pi, pi);
+       output_fields velocity, pressure;
+   }
+}

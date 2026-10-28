@@ -66,3 +66,8 @@ validated. Channel flow and compressible cases were left as perspectives. The fi
 ## Author
 
 Boris Keubou Wamba
+
+## License
+
+Code in `src/`, `scripts/` and `tests/`: MIT (see `LICENSE`). `config/taylor_green_vortex_3D.nts` is an input
+file for Notus (CeCILL license, © Bordeaux INP, Université de Bordeaux, CNRS); the report is © the author.
